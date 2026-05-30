@@ -46,18 +46,19 @@ client = arxiv.Client(
 
 search = arxiv.Search(
     query="cat:cs.AI OR cat:cs.LG",
-    max_results=5,
+    max_results=200,
     sort_by=arxiv.SortCriterion.SubmittedDate
 )
 
+
+paper_count=0
 for paper in client.results(search):
+    paper_count+=1
     paper_id=paper.get_short_id()
     chunks=chunk_text(paper.summary)
-    print("Number of chunks:", len(chunks))
     for i,chunk in enumerate(chunks):
         vector = model.encode(chunk)
         chunk_id=f"{paper_id}_{i}"
-        print("CHUNK ID:", chunk_id)
         index.upsert(
             vectors=[{
                 "id":chunk_id,
@@ -68,4 +69,4 @@ for paper in client.results(search):
                 }
             }
         ])
-        print("Uploaded:", chunk_id)
+    print(f"[{paper_count}] Uploaded: {paper.title[:60]}")
