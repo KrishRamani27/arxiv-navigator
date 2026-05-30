@@ -1,5 +1,6 @@
 import os
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
@@ -16,6 +17,14 @@ claude = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 class Query(BaseModel):
     question: str
 
@@ -28,8 +37,13 @@ def ask(query: Query):
     results = index.query(vector=query_vector,top_k=3,include_metadata=True)
 
     context = ""
+    sources = []
     for match in results["matches"]:
         context = context + match["metadata"]["text"] + "\n\n"
+        sources.append({
+            "title": match["metadata"].get("title", ""),
+            "url": match["metadata"].get("url", "")
+        })
 
     prompt = f"""Here is context from research papers:
 
@@ -47,4 +61,4 @@ If the context does not contain the answer, say so."""
     )
     answer = response.content[0].text
 
-    return {"answer": answer}
+    return {"answer": answer, "sources": sources}

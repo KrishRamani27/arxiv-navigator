@@ -65,7 +65,8 @@ for paper in client.results(search):
                 "values":vector.tolist(),
                 "metadata": {
                     "title":paper.title,
-                    "text":chunk
+                    "text":chunk,
+                    "url": paper.entry_id
                 }
             }
         ])
