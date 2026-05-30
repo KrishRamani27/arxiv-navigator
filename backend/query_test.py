@@ -42,6 +42,7 @@ If the context does not contain the answer, say so."""
 response = claude.messages.create(
     model="claude-haiku-4-5-20251001",
     max_tokens=500,
+    temperature=0.3,
     messages=[{"role": "user", "content": prompt}]
 )
 answer = response.content[0].text
