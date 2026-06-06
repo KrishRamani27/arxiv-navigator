@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
-const API_URL = 'http://127.0.0.1:8000/ask'
+const API_URL = 'https://KrishRamani-arxiv-navigator.hf.space/ask'
 
 function App() {
   const [sources, setSources] = useState([])
