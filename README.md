@@ -10,33 +10,33 @@ ArXiv Navigator is a full-stack RAG (Retrieval-Augmented Generation) application
 
 ## Project overview
 
-Users enter a natural language question about AI or machine learning research. The backend embeds the query, retrieves the top-5 semantically relevant papers from Pinecone, and sends them as context to Claude Haiku, which returns a cited, grounded answer. The frontend renders the response with clickable source links to the original ArXiv papers.
+Users enter a natural language question about AI or machine learning research. The backend embeds the query, retrieves the top semantically relevant papers from Pinecone, and sends them as context to Claude, which returns a cited, grounded answer. The frontend renders the response with clickable source links to the original ArXiv papers.
 
-The ingestion pipeline runs separately — it fetches recent papers from the ArXiv API, embeds each abstract using OpenAI's `text-embedding-3-small`, and upserts vectors into Pinecone with title, abstract, and URL metadata.
+The ingestion pipeline runs separately — it fetches recent papers from the ArXiv API, embeds each abstract locally using `sentence-transformers`, and upserts vectors into Pinecone with title, text, and URL metadata.
 
 ---
 
 ## Live demo
 
-| Service   | URL |
-|-----------|-----|
-| **App**   | Coming soon |
-| **API**   | Coming soon |
+| Service | URL |
+|---------|-----|
+| **App** | https://arxiv-navigator.vercel.app |
+| **API** | https://KrishRamani-arxiv-navigator.hf.space |
 
-The production frontend calls `POST /ask` on the hosted backend. The API root (`GET /`) returns a health check: `{"status": "ArXiv Navigator is running"}`.
+The production frontend calls `POST /ask` on the hosted backend. Interactive API docs are available at the backend's `/docs` route.
 
 ---
 
 ## Tech stack
 
-| Layer          | Technologies |
-|----------------|--------------|
-| **Embeddings** | OpenAI `text-embedding-3-small` (1536-dim) |
-| **Vector DB**  | Pinecone — stores title, abstract, and URL metadata per paper |
-| **LLM**        | Claude Haiku (temperature 0.3) via Anthropic API |
-| **Ingestion**  | ArXiv API — cs.AI + cs.LG categories, 200 most recent papers |
-| **Backend**    | FastAPI, Uvicorn, Pydantic — deployed on Hugging Face Spaces |
-| **Frontend**   | React, react-markdown — deployed on Vercel |
+| Layer | Technologies |
+|-------|--------------|
+| **Embeddings** | `sentence-transformers` (`all-MiniLM-L6-v2`, 384-dim), running on PyTorch |
+| **Vector DB** | Pinecone — stores title, text, and URL metadata per paper (cosine similarity) |
+| **LLM** | Claude Haiku (temperature 0.3) via the Anthropic API |
+| **Ingestion** | ArXiv API — cs.AI + cs.LG categories, 200 recent papers |
+| **Backend** | FastAPI, Uvicorn, Pydantic — containerized with Docker, deployed on Hugging Face Spaces |
+| **Frontend** | React (Vite), react-markdown — deployed on Vercel |
 
 ---
 
@@ -45,27 +45,27 @@ The production frontend calls `POST /ask` on the hosted backend. The API root (`
 ```mermaid
 flowchart LR
   A[React input] -->|POST JSON| B[FastAPI /ask]
-  B --> C[OpenAI embeddings]
-  C --> D[Pinecone top-5 query]
-  D --> E[Retrieved paper chunks]
+  B --> C[sentence-transformers query embedding]
+  C --> D[Pinecone top-k query]
+  D --> E[Retrieved papers]
   E --> F[Claude Haiku with grounding prompt]
   F --> G[Cited answer + source URLs]
   G --> H[React UI with markdown + links]
 ```
 
-1. **Ingestion** — The ingestion script fetches up to 200 recent papers from the ArXiv API across cs.AI and cs.LG, extracts title, abstract, and URL, embeds each abstract with `text-embedding-3-small`, and upserts into Pinecone.
+1. **Ingestion** — The ingestion script fetches up to 200 recent papers from the ArXiv API across cs.AI and cs.LG, extracts title, abstract text, and URL, embeds each abstract with `all-MiniLM-L6-v2`, and upserts into Pinecone.
 2. **Query embedding** — The user's question is embedded with the same model to ensure vector space alignment.
-3. **Retrieval** — Pinecone returns the top-5 most semantically similar paper chunks by cosine similarity.
-4. **Generation** — Claude Haiku receives the retrieved abstracts as context with a strict grounding instruction: answer only from the provided papers and cite each claim.
+3. **Retrieval** — Pinecone returns the most semantically similar papers by cosine similarity, with their metadata.
+4. **Generation** — Claude Haiku receives the retrieved abstracts as context with a strict grounding instruction: answer only from the provided papers.
 5. **Response** — Example shape:
 
    ```json
    {
-     "answer": "Recent work on RLHF suggests... [1]",
+     "answer": "Recent work on efficient video generation suggests...",
      "sources": [
        {
-         "title": "Reinforcement Learning from Human Feedback: A Survey",
-         "url": "https://arxiv.org/abs/2312.XXXXX"
+         "title": "VideoMLA: Low-Rank Latent KV Cache for Autoregressive Video Diffusion",
+         "url": "https://arxiv.org/abs/XXXX.XXXXX"
        }
      ]
    }
@@ -75,13 +75,12 @@ flowchart LR
 
 ## Key technical decisions
 
-- **Embedding model** — `text-embedding-3-small` was chosen over larger alternatives for its strong semantic performance at lower cost and latency, keeping retrieval fast without sacrificing relevance quality.
-- **Chunk strategy** — Each paper is indexed as a single chunk (title + abstract). Full-text ingestion was considered but abstracts contain sufficient signal for semantic matching at this corpus size.
-- **Temperature 0.3** — Claude Haiku is set to 0.3 to keep answers consistent and grounded while retaining natural fluency. Lower values produced overly rigid responses; higher values drifted from the retrieved context.
-- **Grounding instruction** — The system prompt explicitly instructs the model to answer only from the provided papers and to cite each claim. This minimizes hallucination on topics outside the retrieved context.
-- **Semantic caching** — Repeated or near-duplicate queries are served from a local cache by comparing query embeddings against previously seen vectors, reducing redundant Pinecone and Claude API calls.
-- **Eval loop** — A retrieval evaluation step logs chunk-query cosine similarity scores per request, enabling iterative tuning of the chunking strategy and similarity threshold without manual inspection.
-- **Pydantic validation** — All incoming requests are validated with a Pydantic schema before hitting the retrieval pipeline, ensuring clean inputs and informative error responses.
+- **Embedding model** — `all-MiniLM-L6-v2` (via `sentence-transformers`) was chosen for strong semantic performance at small size (384-dim), running locally and free of per-call embedding costs. The same model is used for both ingestion and query embedding to keep the vector space aligned.
+- **Abstracts-only indexing** — Each paper is indexed by its title and abstract rather than full text. Abstracts carry high semantic signal, which keeps the corpus simple and retrieval fast at this scale; full-text ingestion is a possible future extension.
+- **Temperature 0.3** — Claude Haiku runs at 0.3 to keep answers consistent and grounded while retaining natural fluency.
+- **Grounding instruction** — The prompt explicitly instructs the model to answer only from the provided papers, which minimizes hallucination on topics outside the retrieved context.
+- **Pydantic validation** — Incoming requests are validated with a Pydantic schema before hitting the retrieval pipeline, ensuring clean inputs and informative errors.
+- **Containerized deployment** — The backend loads a PyTorch embedding model, which exceeds typical free-tier memory limits. It is packaged with Docker and deployed on Hugging Face Spaces, which provides enough memory to host the model.
 
 ---
 
@@ -90,16 +89,11 @@ flowchart LR
 ```
 arxiv-navigator/
 ├── backend/
-│   ├── main.py              # FastAPI app and /ask endpoint
+│   ├── main.py              # FastAPI app and /ask endpoint (embed, retrieve, generate)
 │   ├── ingest.py            # ArXiv API fetch, embed, and Pinecone upsert
-│   ├── retriever.py         # Query embedding and Pinecone similarity search
-│   ├── generator.py         # Claude Haiku prompt construction and API call
-│   ├── cache.py             # Semantic caching layer
 │   └── requirements.txt
 └── frontend/
-    ├── src/App.js           # Query input and answer display
-    ├── src/SourceList.js    # Clickable source paper links
-    └── package.json
+    └── src/App.jsx          # Query input, answer display, source links
 ```
 
 ---
@@ -109,8 +103,8 @@ arxiv-navigator/
 ### Prerequisites
 
 - **Node.js** 18+ and npm (frontend)
-- **Python** 3.10+ (backend)
-- **API keys** — set in a `.env` file: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `PINECONE_API_KEY`, `PINECONE_INDEX_NAME`
+- **Python** 3.13 (backend)
+- **API keys** — set in a `.env` file: `ANTHROPIC_API_KEY`, `PINECONE_API_KEY`
 
 ### Backend
 
@@ -126,31 +120,29 @@ python ingest.py
 uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-API docs: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+API docs: http://127.0.0.1:8000/docs
 
 ### Frontend
 
 ```bash
 cd frontend
 npm install
-npm start
+npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open the URL Vite prints (default http://localhost:5173).
 
-**Point the UI at your local API:** In `frontend/src/App.js`, set `API_URL` to `http://127.0.0.1:8000/ask` while developing. The committed default targets the production backend.
+**Point the UI at your local API:** In `frontend/src/App.jsx`, set `API_URL` to `http://127.0.0.1:8000/ask` while developing. The committed default targets the production backend.
 
 ### Quick API test
 
 ```bash
 curl -X POST http://127.0.0.1:8000/ask \
   -H "Content-Type: application/json" \
-  -d '{
-    "question": "What are the latest approaches to reducing hallucinations in large language models?"
-  }'
+  -d '{"question": "What are recent methods for efficient video generation?"}'
 ```
 
-### Production builds
+### Production deployment
 
-- **Frontend:** `npm run build` from `frontend/` (static output in `frontend/build/`, suitable for Vercel)
-- **Backend:** Deployed via Docker on Hugging Face Spaces; ensure `.env` variables are set as Spaces secrets and `requirements.txt` is up to date
+- **Frontend:** Deployed on Vercel from the `frontend/` directory (Vite build).
+- **Backend:** Containerized with Docker and deployed on Hugging Face Spaces. API keys are set as Space secrets (`ANTHROPIC_API_KEY`, `PINECONE_API_KEY`); the app listens on port 7860.
